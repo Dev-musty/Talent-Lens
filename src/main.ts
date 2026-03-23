@@ -27,12 +27,12 @@ async function bootstrap() {
   app.enableCors({
     origin: (origin, callback) => {
       if (!origin) {
-        callback(null, true);
+        callback(null, false);
         return;
       }
 
       if (allowedOrigins.length === 0) {
-        callback(null, true);
+        callback(null, origin);
         return;
       }
 
@@ -40,7 +40,7 @@ async function bootstrap() {
       const isAllowed = allowedOrigins.includes(normalizedRequestOrigin);
 
       if (isAllowed) {
-        callback(null, true);
+        callback(null, origin);
         return;
       }
 

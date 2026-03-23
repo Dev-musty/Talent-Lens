@@ -86,6 +86,7 @@ cp .env.example .env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 GEMINI_API_KEY=your-gemini-api-key
+FRONTEND_URL=https://your-frontend-domain.com
 PORT=3000
 ```
 
