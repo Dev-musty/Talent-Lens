@@ -1,0 +1,513 @@
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+TalentLens
+Technical Requirements Document -- Backend
+NestJS API · Scoring Engine · Supabase Integration
+
+Stack Runtime Deployment Version Status
+
+NestJS · TypeScript · Supabase (PostgreSQL) · Gemini 2.0 Flash Node.js 20+ Render Free Tier 1.1 -- Updated to reflect actual project structure Active -- Hackathon Build
+
+Page 1
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+1. System Architecture
+1.1 Overview
+The TalentLens backend is a RESTful NestJS API with four endpoints. It uses Supabase as the persistence layer and Gemini 2.0 Flash as the AI scoring engine. There is no authentication, no background queues, and no WebSockets in the MVP. All operations are synchronous and request-scoped.
+1.2 Actual Project Structure
+The following reflects the real folder structure of the repository as built:
+
+Page 2
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+src/
+
+sss common/
+
+s sss config/
+
+# Environment/config service
+
+s sss common.module.ts
+
+sss database/
+
+s sss migration/
+
+# SQL migration scripts
+
+s sss base-model.ts
+
+# Shared base entity
+
+s sss database.module.ts
+
+sss guards/
+
+# Auth guards (future use)
+
+s sss client-guard.ts
+
+sss module/
+
+s sss applications/
+
+# Freelancer application feature
+
+s s sss docs/
+
+# API documentation
+
+s s sss dtos/
+
+# create-application.dto.ts etc.
+
+s s sss model/
+
+# Application entity/interface
+
+s s sss services/
+
+# ApplicationsService
+
+s s sss applications.controller.ts
+
+s s sss applications.module.ts
+
+s sss jobs/
+
+# Job posting feature
+
+s s sss docs/
+
+s s sss dtos/
+
+# create-job.dto.ts etc.
+
+s s sss model/
+
+# Job entity/interface
+
+s s sss services/
+
+# JobsService
+
+s s sss jobs.controller.ts
+
+s s sss jobs.module.ts
+
+s sss scoring/
+
+# AI scoring engine (NO controller)
+
+s
+
+sss docs/
+
+s
+
+sss dtos/
+
+s
+
+sss model/
+
+s
+
+sss services/
+
+# ScoringService -- Gemini calls
+
+s
+
+sss scoring.module.ts
+
+sss app.module.ts
+
+# Root module -- imports feature modules
+
+sss main.ts
+
+scripts/ sss gitkeep.js
+
+# Populates empty dirs before commit
+
+s scoring has no controller. It is an internal service called only by ApplicationsService. Delete scoring.controller.ts if it was auto-generated.
+
+ app.service.ts and app.controller.ts are NestJS boilerplate defaults -- they are not needed and should be deleted. AppModule should only import feature modules.
+
+1.3 Environment Variables
+
+Page 3
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+# .env SUPABASE_URL=https://your-project.supabase.co SUPABASE_ANON_KEY=your-anon-key GEMINI_API_KEY=your-gemini-api-key PORT=3000
+s GEMINI_API_KEY must never be committed to source control. Confirm .env is listed in .gitignore before every push.
+1.4 AppModule Setup
+AppModule should only import your feature modules. Remove any boilerplate service or controller:
+@Module({ imports: [ ConfigModule.forRoot({ isGlobal: true }), DatabaseModule, JobsModule, ApplicationsModule, ScoringModule, ],
+}) export class AppModule {}
+
+Page 4
+
+TalentLens -- Backend TRD
+
+2. Database Schema
+
+2.1 jobs table
+
+CREATE TABLE jobs (
+
+id
+
+UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+title
+
+TEXT NOT NULL,
+
+description TEXT NOT NULL,
+
+budget_min INTEGER NOT NULL,
+
+budget_max INTEGER NOT NULL,
+
+required_tier TEXT NOT NULL DEFAULT 'any',
+
+-- allowed: 'any' | 'junior' | 'mid' | 'senior'
+
+client_name TEXT NOT NULL,
+
+unique_link TEXT UNIQUE NOT NULL,
+
+created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+
+);
+
+2.2 applications table
+
+v1.1 -- Updated
+
+Page 5
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+CREATE TABLE applications (
+
+id
+
+UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+job_id
+
+UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+
+freelancer_name TEXT NOT NULL,
+
+skills
+
+TEXT[] NOT NULL,
+
+years_experience INTEGER NOT NULL,
+
+portfolio_urls
+
+TEXT[],
+
+bio
+
+TEXT,
+
+testimonies
+
+TEXT,
+
+proposed_rate
+
+INTEGER NOT NULL,
+
+inferred_tier
+
+TEXT,
+
+fit_score
+
+INTEGER,
+
+testimony_score INTEGER,
+
+price_score
+
+INTEGER,
+
+overall_rank_score INTEGER,
+
+ai_reasoning
+
+TEXT,
+
+tier_reasoning
+
+TEXT,
+
+access_granted
+
+BOOLEAN DEFAULT FALSE,
+
+rejection_reason TEXT,
+
+created_at
+
+TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+
+);
+
+CREATE INDEX idx_applications_job_id ON applications(job_id); CREATE INDEX idx_applications_rank ON applications(job_id, overall_rank_score DESC);
+
+Page 6
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+3. API Endpoints
+3.1 POST /jobs
+Creates a new job. Returns a unique shareable link.
+Request Body
+{ "title": "React Developer for fintech app", "description": "We need a developer to build...", "budget_min": 500, "budget_max": 1500, "required_tier": "mid", "client_name": "Acme Inc"
+}
+Response 201
+{ "id": "uuid", "unique_link": "a3f7b91c", "apply_url": "/apply/a3f7b91c", "dashboard_url": "/dashboard/a3f7b91c"
+}
+3.2 GET /jobs/:link
+Returns job details. Used by the freelancer Apply page to display the role. Returns 404 if the link does not exist.
+3.3 POST /jobs/:link/apply
+Freelancer submits their profile. Triggers the full AI scoring pipeline synchronously and returns the result immediately.
+Request Body
+
+Page 7
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+{ "freelancer_name": "John Doe", "skills": ["React", "TypeScript", "Node.js"], "years_experience": 3, "portfolio_urls": ["https://github.com/johndoe"], "bio": "Frontend developer specialising in fintech...", "testimonies": "John delivered ahead of schedule...", "proposed_rate": 1200
+}
+Response 201 -- Access Granted
+{ "access_granted": true, "inferred_tier": "mid", "fit_score": 82, "overall_rank_score": 78, "rank_position": 2, "total_applicants": 5, "ai_reasoning": "Strong React and TypeScript skills align well..."
+}
+Response 201 -- Access Denied
+{ "access_granted": false, "inferred_tier": "junior", "rejection_reason": "This role requires Mid-level or above. Your profile was assessed as Junior based on 1 year of experience and limited portfolio depth."
+}
+
+3.4 GET /jobs/:link/applications
+Returns the ranked shortlist of admitted applicants for the client dashboard, sorted by overall_rank_score descending by default.
+
+Query Param tier sort
+
+Accepted Values junior · mid · senior (optional filter) rank (default) · price · testimony
+
+Page 8
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+3.5 GET /health
+Health check endpoint. Returns 200 with a timestamp. Used by UptimeRobot to keep the Render free tier warm.
+@Get('health') health() {
+return { status: 'ok', timestamp: new Date().toISOString() }; }
+
+Page 9
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+4. Scoring Engine
+4.1 Where It Lives
+ScoringService lives in src/module/scoring/services/. It is imported into ApplicationsModule via ScoringModule and called directly from ApplicationsService after a profile is submitted. It has no controller and no public endpoints.
+4.2 Gemini Prompt
+A single structured prompt sent to Gemini 2.0 Flash with temperature 0.1 to ensure consistent, deterministic JSON output:
+const prompt = ` You are an expert technical recruiter. Evaluate this freelancer for the role.
+JOB TITLE: ${job.title} JOB DESCRIPTION: ${job.description} BUDGET RANGE: $${job.budget_min} - $${job.budget_max}
+FREELANCER PROFILE: Name: ${application.freelancer_name} Skills: ${application.skills.join(', ')} Years of Experience: ${application.years_experience} Bio: ${application.bio} Portfolio URLs: ${application.portfolio_urls?.join(', ')} Client Testimonies: ${application.testimonies} Proposed Rate: $${application.proposed_rate}
+Return ONLY a valid JSON object. No markdown. No preamble. {
+"inferred_tier": "junior" | "mid" | "senior", "fit_score": 0-100, "testimony_score": 0-100, "ai_reasoning": "2-3 sentence plain English explanation", "tier_reasoning": "one sentence explaining tier assignment" }
+Tier rules (use evidence only -- never self-declaration): junior: 0-2 years, limited/generic portfolio, no specialisation mid: 2-5 years, clear portfolio, some specialisation senior: 5+ years, deep specialisation, leadership signals
+`;
+Page 10
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+4.3 Price Score Calculation
+Computed in ApplicationsService -- never by the AI -- to ensure full consistency:
+function computePriceScore(proposed: number, min: number, max: number): number { if (proposed >= min && proposed <= max) return 100; if (proposed < min) { const diff = (min - proposed) / min; return Math.max(0, Math.round(100 - diff * 30)); } const overage = (proposed - max) / max; return Math.max(0, Math.round(100 - overage * 100));
+}
+
+4.4 Overall Rank Score Formula
+
+overall_rank_score = Math.round(
+
+(fit_score
+
+* 0.50) +
+
+(testimony_score * 0.30) +
+
+(price_score
+
+* 0.20)
+
+);
+
+Signal fit_score testimony_score price_score
+
+Source Gemini -- skill & experience match against job description Gemini -- quality and relevance of past client feedback Computed -- alignment of proposed rate with budget range
+
+Weight 50% 30% 20%
+
+4.5 Tier Gate Logic
+function checkTierAccess(inferred: string, required: string): boolean { if (required === 'any') return true; if (required === 'junior') return inferred === 'junior'; if (required === 'mid') return ['mid', 'senior'].includes(inferred); if (required === 'senior') return inferred === 'senior'; return false;
+}
+
+Job Required Tier any
+
+Allowed Inferred Tiers junior, mid, senior
+
+Page 11
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+junior mid senior
+
+junior only mid, senior senior only
+
+4.6 Gemini Error Handling
+If Gemini fails or returns unparseable JSON, the application is saved with a pending state rather than failing the entire request:
+try { const raw = await this.gemini.complete(prompt); const clean = raw.replace(/```json|```/g, '').trim(); return JSON.parse(clean);
+} catch (err) { this.logger.error('Gemini scoring failed', err); return { inferred_tier: 'unknown', fit_score: 0, testimony_score: 0, ai_reasoning: 'Scoring pending -- please check back shortly.', tier_reasoning: '' };
+}
+
+Page 12
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+5. Data Transfer Objects
+DTOs live in the dtos/ folder of each module. All validation is handled by class-validator, applied globally via ValidationPipe in main.ts.
+5.1 CreateJobDto (src/module/jobs/dtos/)
+export class CreateJobDto { @IsString() @IsNotEmpty() title: string;
+@IsString() @IsNotEmpty() description: string;
+@IsInt() @Min(1) budget_min: number;
+@IsInt() @Min(1) budget_max: number;
+@IsIn(['any', 'junior', 'mid', 'senior']) required_tier: string;
+@IsString() @IsNotEmpty() client_name: string; }
+5.2 CreateApplicationDto (src/module/applications/dtos/)
+
+Page 13
+
+TalentLens -- Backend TRD
+export class CreateApplicationDto { @IsString() @IsNotEmpty() freelancer_name: string;
+@IsArray() @ArrayMinSize(1) skills: string[];
+@IsInt() @Min(0) @Max(50) years_experience: number;
+@IsArray() @IsOptional() portfolio_urls?: string[];
+@IsString() @IsOptional() bio?: string;
+@IsString() @IsOptional() testimonies?: string;
+@IsInt() @Min(1) proposed_rate: number; }
+
+v1.1 -- Updated
+
+Page 14
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+6. Unique Link Generation
+Job links are generated using nanoid -- short, URL-safe, and collision-resistant. UUIDs are intentionally avoided for public-facing links as they are too long to share comfortably.
+import { nanoid } from 'nanoid'; const unique_link = nanoid(8); // e.g. 'a3f7b91c'
+s Install nanoid v3 (CommonJS compatible): npm install nanoid@3. Version 4+ is ESM-only and will break NestJS without extra config.
+
+Page 15
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+7. CORS & Security
+7.1 CORS
+app.enableCors({ origin: process.env.FRONTEND_URL || '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'],
+});
+7.2 Global Validation Pipe
+app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true,
+}));
+7.3 Rate Limiting
+Not required for MVP. If Gemini API costs become a concern during demo, add @nestjs/throttler at 10 requests per minute per IP on the POST /jobs/:link/apply endpoint only.
+
+Page 16
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+8. Deployment -- Render
+
+Setting Service Type Runtime Build Command Start Command Instance Type Auto-Deploy Health Check
+
+Value Web Service Node npm install && npm run build node dist/main.js Free Enabled from main branch GET /health
+
+8.1 Cold Start
+Render free tier spins down after 15 minutes of inactivity. Register the /health endpoint on UptimeRobot with a 14-minute ping interval to keep the service warm during the hackathon demo window.
+8.2 Environment Variables on Render
+Set all variables from your .env file in the Render dashboard under Environment. Never commit .env to the repository.
+
+Page 17
+
+TalentLens -- Backend TRD
+
+9. NPM Scripts
+
+Script npm run start:dev npm run build npm run start:prod npm run gitkeep
+
+Purpose Start NestJS with hot reload (ts-watch) Compile TypeScript to dist/ Run the compiled output Populate empty folders with .gitkeep before committing
+
+v1.1 -- Updated
+
+Page 18
+
+TalentLens -- Backend TRD
+
+v1.1 -- Updated
+
+10. Critical Test Scenarios
+
+Scenario Gemini returns valid JSON Gemini returns malformed JSON Gemini API key invalid Tier gate blocks applicant Tier gate passes applicant Proposed rate over budget Portfolio URLs empty Invalid job link on apply GET /applications on empty job required_tier = 'any' Sort by price query param Filter by tier query param
+
+Expected Behaviour Scores saved, applicant ranked correctly Graceful fallback, saved as pending, no 500 thrown 500 returned with user-friendly message access_granted: false, rejection_reason populated access_granted: true, rank position returned price_score penalised proportionally testimony_score defaults to 0 gracefully 404 returned cleanly Empty array returned, not 404 All tiers admitted regardless of inferred tier Results ordered by price_score descending Only matching tier applicants returned
+
+TalentLens Backend TRD v1.1 -- DevCareer × Raenest Hackathon, March 2026 Author: Oluwatobiloba (Mustapha Ridwan) · Lagos, Nigeria
+
+Priority P0 P0 P0 P0 P0 P1 P1 P1 P1 P1 P2 P2
+
+Page 19
+
+
