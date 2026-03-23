@@ -13,7 +13,7 @@ import {
 export const APPLICATIONS_SWAGGER_TAG = {
   name: 'Applications',
   description:
-    'Freelancer application submission and ranked shortlist endpoints for each job.',
+    'Freelancer application submission and ranked shortlist endpoints for each job, including Gemini-powered scoring outputs.',
 };
 
 export const ApiApplicationsControllerDocs = () =>
@@ -24,7 +24,7 @@ export const ApiApplyDocs = () =>
     ApiOperation({
       summary: 'Submit application for a job',
       description:
-        'Submits a freelancer profile, runs scoring, applies tier gating, and returns either admission details or rejection reason.',
+        'Submits a freelancer profile, requests Gemini AI scoring (tier + fit + testimony), applies price scoring and tier gating, and returns either admission details or a rejection reason.',
     }),
     ApiParam({
       name: 'link',
@@ -75,7 +75,8 @@ export const ApiApplyDocs = () =>
       },
     }),
     ApiCreatedResponse({
-      description: 'Application processed. Response can be granted or denied.',
+      description:
+        'Application processed. Response can be granted or denied. If Gemini fails, scoring falls back to pending-safe values and tier may resolve to unknown.',
       schema: {
         oneOf: [
           {
@@ -90,7 +91,7 @@ export const ApiApplyDocs = () =>
               ai_reasoning: {
                 type: 'string',
                 example:
-                  'Profile assessed using skills, experience, and role alignment signals.',
+                  'Strong React and TypeScript skills align well with the role requirements.',
               },
             },
           },
@@ -105,6 +106,20 @@ export const ApiApplyDocs = () =>
                   'This role requires mid. Your profile was assessed as junior.',
               },
             },
+          },
+          {
+            type: 'object',
+            properties: {
+              access_granted: { type: 'boolean', example: false },
+              inferred_tier: { type: 'string', example: 'unknown' },
+              rejection_reason: {
+                type: 'string',
+                example:
+                  'This role requires mid. Your profile was assessed as unknown.',
+              },
+            },
+            description:
+              'Fallback case when Gemini scoring is unavailable or response parsing fails.',
           },
         ],
       },

@@ -191,6 +191,21 @@ Health check endpoint. Returns `200` — used by UptimeRobot to keep the Render 
 
 ## Scoring Logic
 
+Application scoring is powered by **Gemini 2.0 Flash** at runtime. The backend sends a structured recruiter prompt and expects strict JSON with:
+
+- `inferred_tier`
+- `fit_score`
+- `testimony_score`
+- `ai_reasoning`
+- `tier_reasoning`
+
+If Gemini fails (network, auth, or invalid JSON), the API gracefully falls back to a pending-safe scoring state:
+
+- `inferred_tier: "unknown"`
+- `fit_score: 0`
+- `testimony_score: 0`
+- `ai_reasoning: "Scoring pending -- please check back shortly."`
+
 ```
 overall_rank_score = (fit_score × 0.50)
                    + (testimony_score × 0.30)

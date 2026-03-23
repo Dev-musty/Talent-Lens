@@ -4,10 +4,6 @@ export const envs = () => ({
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
   },
-  supabase: {
-    url: process.env.SUPABASE_URL,
-    anonKey: process.env.SUPABASE_ANON_KEY,
-  },
   db: {
     type: process.env.DB_TYPE ?? 'postgres',
     url: process.env.DATABASE_URL,
