@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { intializeDataSource } from './database/data-source';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { JOBS_SWAGGER_TAG } from './module/jobs/docs/jobs.docs';
 import { APPLICATIONS_SWAGGER_TAG } from './module/applications/docs/applications.docs';
@@ -35,15 +34,8 @@ async function bootstrap() {
     },
   });
   const logger = new Logger('bootstrap');
-  // Initialize database connection
-  try {
-    await intializeDataSource();
-    logger.log('Data Source has been initialized!');
-  } catch (err) {
-    logger.error('Error during Data Source initialization', err);
-    process.exit(1);
-  }
   await app.listen(process.env.PORT ?? 3000);
+  logger.log('Application started successfully');
 }
 bootstrap().catch((err) => {
   console.error('Failed to start application:', err);

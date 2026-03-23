@@ -24,20 +24,29 @@ const dbType =
   (process.env.DB_TYPE as DataSourceOptions['type'] | undefined) || 'postgres';
 
 const sslEnabled = process.env.DB_SSL === 'true';
+const databaseUrl = process.env.DATABASE_URL?.trim();
+
+const parsedUrl = databaseUrl ? new URL(databaseUrl) : null;
+
+const normalizedDbConfig = parsedUrl
+  ? {
+      host: parsedUrl.hostname,
+      port: Number(parsedUrl.port || 5432),
+      username: decodeURIComponent(parsedUrl.username || ''),
+      password: String(decodeURIComponent(parsedUrl.password || '')),
+      database: decodeURIComponent(parsedUrl.pathname.replace(/^\//, '')),
+    }
+  : {
+      host: process.env.DB_HOST,
+      password: String(process.env.DB_PASSWORD || ''),
+      database: process.env.DB,
+      port: Number(process.env.DB_PORT) || 5432,
+      username: process.env.DB_USERNAME,
+    };
 
 const dataSourceConfig = {
   type: dbType,
-  ...(process.env.DATABASE_URL
-    ? {
-        url: process.env.DATABASE_URL,
-      }
-    : {
-        host: process.env.DB_HOST,
-        password: String(process.env.DB_PASSWORD || ''),
-        database: process.env.DB,
-        port: Number(process.env.DB_PORT) || 5432,
-        username: process.env.DB_USERNAME,
-      }),
+  ...normalizedDbConfig,
   ...(sslEnabled
     ? {
         ssl: { rejectUnauthorized: false },
