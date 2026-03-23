@@ -18,7 +18,7 @@ export class ScoringService {
         this.logger.error(
           'GEMINI_API_KEY is missing. Returning scoring fallback',
         );
-        return this.fallback();
+        return this.fallback(application);
       }
 
       const prompt = this.buildPrompt(job, application);
@@ -27,13 +27,13 @@ export class ScoringService {
 
       if (!parsed) {
         this.logger.error('Gemini returned invalid JSON payload');
-        return this.fallback();
+        return this.fallback(application);
       }
 
       return parsed;
     } catch (error) {
       this.logger.error('Gemini scoring failed', error as Error);
-      return this.fallback();
+      return this.fallback(application);
     }
   }
 
@@ -115,51 +115,116 @@ Tier rules (use evidence only -- never self-declaration):
 
   private parseGeminiJson(rawText: string): ScoringModel | null {
     try {
-      const clean = rawText.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean) as Partial<ScoringModel>;
+      const clean = rawText.replace(/```json|```/gi, '').trim();
+      const jsonPayload = this.extractJsonObject(clean);
+      const parsed = JSON.parse(jsonPayload) as Partial<ScoringModel> & {
+        inferredTier?: unknown;
+        fitScore?: unknown;
+        testimonyScore?: unknown;
+        aiReasoning?: unknown;
+        tierReasoning?: unknown;
+      };
 
-      const inferredTier = parsed.inferred_tier;
-      if (
-        inferredTier !== 'junior' &&
-        inferredTier !== 'mid' &&
-        inferredTier !== 'senior'
-      ) {
+      const inferredTier = this.normalizeTier(
+        parsed.inferred_tier ?? parsed.inferredTier,
+      );
+      if (!inferredTier) {
         return null;
       }
 
+      const fitScore = parsed.fit_score ?? parsed.fitScore;
+      const testimonyScore = parsed.testimony_score ?? parsed.testimonyScore;
+      const aiReasoning = parsed.ai_reasoning ?? parsed.aiReasoning;
+      const tierReasoning = parsed.tier_reasoning ?? parsed.tierReasoning;
+      const normalizedAiReasoning =
+        typeof aiReasoning === 'string' && aiReasoning.trim()
+          ? aiReasoning.trim()
+          : 'Scoring completed by AI.';
+      const normalizedTierReasoning =
+        typeof tierReasoning === 'string' ? tierReasoning.trim() : '';
+
       return {
         inferred_tier: inferredTier,
-        fit_score: this.toScore(parsed.fit_score),
-        testimony_score: this.toScore(parsed.testimony_score),
-        ai_reasoning:
-          typeof parsed.ai_reasoning === 'string' && parsed.ai_reasoning.trim()
-            ? parsed.ai_reasoning.trim()
-            : 'Scoring completed by AI.',
-        tier_reasoning:
-          typeof parsed.tier_reasoning === 'string'
-            ? parsed.tier_reasoning.trim()
-            : '',
+        fit_score: this.toScore(fitScore),
+        testimony_score: this.toScore(testimonyScore),
+        ai_reasoning: normalizedAiReasoning,
+        tier_reasoning: normalizedTierReasoning,
       };
     } catch {
       return null;
     }
   }
 
+  private extractJsonObject(text: string): string {
+    const first = text.indexOf('{');
+    const last = text.lastIndexOf('}');
+
+    if (first !== -1 && last !== -1 && last > first) {
+      return text.slice(first, last + 1);
+    }
+
+    return text;
+  }
+
+  private normalizeTier(value: unknown): 'junior' | 'mid' | 'senior' | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === 'junior') {
+      return 'junior';
+    }
+
+    if (normalized === 'mid' || normalized === 'middle') {
+      return 'mid';
+    }
+
+    if (normalized === 'senior') {
+      return 'senior';
+    }
+
+    return null;
+  }
+
   private toScore(value: unknown): number {
-    const numeric = Number(value);
+    const numeric =
+      typeof value === 'string'
+        ? Number(value.replace('%', '').trim())
+        : Number(value);
     if (!Number.isFinite(numeric)) {
       return 0;
     }
     return Math.max(0, Math.min(100, Math.round(numeric)));
   }
 
-  private fallback(): ScoringModel {
+  private fallback(application: CreateApplicationDto): ScoringModel {
+    const inferredTier = this.estimateTierFromExperience(
+      application.years_experience,
+    );
+
     return {
-      inferred_tier: 'unknown',
+      inferred_tier: inferredTier,
       fit_score: 0,
       testimony_score: 0,
-      ai_reasoning: 'Scoring pending -- please check back shortly.',
-      tier_reasoning: '',
+      ai_reasoning:
+        'AI scoring temporarily unavailable. Tier estimated from experience.',
+      tier_reasoning: `Estimated from ${application.years_experience} years of experience.`,
     };
+  }
+
+  private estimateTierFromExperience(
+    yearsExperience: number,
+  ): 'junior' | 'mid' | 'senior' {
+    if (yearsExperience <= 2) {
+      return 'junior';
+    }
+
+    if (yearsExperience <= 5) {
+      return 'mid';
+    }
+
+    return 'senior';
   }
 }
