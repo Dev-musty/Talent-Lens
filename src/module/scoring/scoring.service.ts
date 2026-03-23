@@ -1,77 +1,165 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { JobsModel } from '../jobs/model/jobs.model';
 import { CreateApplicationDto } from '../applications/dtos/create-application.dto';
 import { ScoringModel } from './model/scoring.model';
 
 @Injectable()
 export class ScoringService {
+  private readonly logger = new Logger(ScoringService.name);
+  private readonly model = 'gemini-2.0-flash';
+
   async scoreApplication(
     job: JobsModel,
     application: CreateApplicationDto,
   ): Promise<ScoringModel> {
     try {
-      const inferred_tier = this.inferTier(application.years_experience);
-      const fit_score = this.computeFitScore(job, application);
-      const testimony_score = this.computeTestimonyScore(
-        application.testimonies,
-      );
+      const apiKey = process.env.GEMINI_API_KEY?.trim();
+      if (!apiKey) {
+        this.logger.error(
+          'GEMINI_API_KEY is missing. Returning scoring fallback',
+        );
+        return this.fallback();
+      }
 
-      return {
-        inferred_tier,
-        fit_score,
-        testimony_score,
-        ai_reasoning:
-          'Profile assessed using skills, experience, and role alignment signals.',
-        tier_reasoning: `Tier inferred from experience (${application.years_experience} years).`,
-      };
-    } catch {
-      return {
-        inferred_tier: 'unknown',
-        fit_score: 0,
-        testimony_score: 0,
-        ai_reasoning: 'Scoring pending -- please check back shortly.',
-        tier_reasoning: '',
-      };
+      const prompt = this.buildPrompt(job, application);
+      const rawText = await this.requestGemini(prompt, apiKey);
+      const parsed = this.parseGeminiJson(rawText);
+
+      if (!parsed) {
+        this.logger.error('Gemini returned invalid JSON payload');
+        return this.fallback();
+      }
+
+      return parsed;
+    } catch (error) {
+      this.logger.error('Gemini scoring failed', error as Error);
+      return this.fallback();
     }
   }
 
-  private inferTier(yearsExperience: number): 'junior' | 'mid' | 'senior' {
-    if (yearsExperience <= 2) {
-      return 'junior';
-    }
-    if (yearsExperience <= 5) {
-      return 'mid';
-    }
-    return 'senior';
-  }
-
-  private computeFitScore(
+  private buildPrompt(
     job: JobsModel,
     application: CreateApplicationDto,
-  ): number {
-    const description = `${job.title} ${job.description}`.toLowerCase();
-    const skillMatches = application.skills.filter((skill) =>
-      description.includes(skill.toLowerCase()),
-    ).length;
+  ): string {
+    return `You are an expert technical recruiter. Evaluate this freelancer for the role.
 
-    const skillScore = Math.min(70, skillMatches * 15);
-    const experienceScore = Math.min(30, application.years_experience * 5);
+JOB TITLE: ${job.title}
+JOB DESCRIPTION: ${job.description}
+BUDGET RANGE: $${job.budget_min} - $${job.budget_max}
 
-    return Math.max(0, Math.min(100, Math.round(skillScore + experienceScore)));
+FREELANCER PROFILE:
+Name: ${application.freelancer_name}
+Skills: ${application.skills.join(', ')}
+Years of Experience: ${application.years_experience}
+Bio: ${application.bio ?? ''}
+Portfolio URLs: ${(application.portfolio_urls ?? []).join(', ')}
+Client Testimonies: ${application.testimonies ?? ''}
+Proposed Rate: $${application.proposed_rate}
+
+Return ONLY a valid JSON object. No markdown. No preamble.
+{
+  "inferred_tier": "junior" | "mid" | "senior",
+  "fit_score": 0-100,
+  "testimony_score": 0-100,
+  "ai_reasoning": "2-3 sentence plain English explanation",
+  "tier_reasoning": "one sentence explaining tier assignment"
+}
+
+Tier rules (use evidence only -- never self-declaration):
+- junior: 0-2 years, limited/generic portfolio, no specialisation
+- mid: 2-5 years, clear portfolio, some specialisation
+- senior: 5+ years, deep specialisation, leadership signals`;
   }
 
-  private computeTestimonyScore(testimonies?: string): number {
-    if (!testimonies || !testimonies.trim()) {
-      return 0;
+  private async requestGemini(prompt: string, apiKey: string): Promise<string> {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Gemini API error ${response.status}: ${body}`);
     }
 
-    const length = testimonies.trim().length;
-    if (length < 40) {
-      return 40;
+    const data = (await response.json()) as {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{ text?: string }>;
+        };
+      }>;
+    };
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      throw new Error('Gemini response did not include text content');
     }
-    if (length < 120) {
-      return 65;
+
+    return text;
+  }
+
+  private parseGeminiJson(rawText: string): ScoringModel | null {
+    try {
+      const clean = rawText.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean) as Partial<ScoringModel>;
+
+      const inferredTier = parsed.inferred_tier;
+      if (
+        inferredTier !== 'junior' &&
+        inferredTier !== 'mid' &&
+        inferredTier !== 'senior'
+      ) {
+        return null;
+      }
+
+      return {
+        inferred_tier: inferredTier,
+        fit_score: this.toScore(parsed.fit_score),
+        testimony_score: this.toScore(parsed.testimony_score),
+        ai_reasoning:
+          typeof parsed.ai_reasoning === 'string' && parsed.ai_reasoning.trim()
+            ? parsed.ai_reasoning.trim()
+            : 'Scoring completed by AI.',
+        tier_reasoning:
+          typeof parsed.tier_reasoning === 'string'
+            ? parsed.tier_reasoning.trim()
+            : '',
+      };
+    } catch {
+      return null;
     }
-    return 80;
+  }
+
+  private toScore(value: unknown): number {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(100, Math.round(numeric)));
+  }
+
+  private fallback(): ScoringModel {
+    return {
+      inferred_tier: 'unknown',
+      fit_score: 0,
+      testimony_score: 0,
+      ai_reasoning: 'Scoring pending -- please check back shortly.',
+      tier_reasoning: '',
+    };
   }
 }
