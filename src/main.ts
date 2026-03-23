@@ -2,14 +2,30 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { intializeDataSource } from './database/data-source';
-import { Logger } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { JOBS_SWAGGER_TAG } from './module/jobs/docs/jobs.docs';
+import { APPLICATIONS_SWAGGER_TAG } from './module/applications/docs/applications.docs';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors();
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || '*',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type'],
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
   const config = new DocumentBuilder()
     .setTitle('TalentLens Documentation')
     .setDescription('TalentLens backend API docs')
     .setVersion('1.0')
+    .addTag(JOBS_SWAGGER_TAG.name, JOBS_SWAGGER_TAG.description)
+    .addTag(APPLICATIONS_SWAGGER_TAG.name, APPLICATIONS_SWAGGER_TAG.description)
     .addBasicAuth()
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
