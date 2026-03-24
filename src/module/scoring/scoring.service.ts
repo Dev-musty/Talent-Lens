@@ -23,12 +23,24 @@ type GeminiSdkModule = {
   GoogleGenerativeAI: new (apiKey: string) => GeminiSdkClient;
 };
 
+class OpenRouterRequestError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly responseBody: string,
+    readonly retryAfterMs?: number,
+  ) {
+    super(`OpenRouter API error ${statusCode}: ${responseBody}`);
+  }
+}
+
 @Injectable()
 export class ScoringService {
   private readonly logger = new Logger(ScoringService.name);
   private readonly geminiModel = 'gemini-2.0-flash';
   private readonly openRouterModel =
     process.env.OPENROUTER_MODEL?.trim() || 'google/gemini-2.0-flash-001';
+  private readonly openRouterMaxRetries = 3;
+  private readonly openRouterBaseDelayMs = 700;
 
   async scoreApplication(
     job: JobsModel,
@@ -151,6 +163,39 @@ Tier rules (use evidence only -- never self-declaration):
     prompt: string,
     apiKey: string,
   ): Promise<string> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= this.openRouterMaxRetries; attempt++) {
+      try {
+        return await this.requestOpenRouterOnce(prompt, apiKey);
+      } catch (error) {
+        lastError = error;
+
+        if (!this.isRetryableOpenRouterError(error)) {
+          throw error;
+        }
+
+        if (attempt >= this.openRouterMaxRetries) {
+          throw error;
+        }
+
+        const retryDelay = this.computeRetryDelayMs(error, attempt);
+        this.logger.warn(
+          `OpenRouter request rate-limited/unavailable; retrying in ${retryDelay}ms (attempt ${attempt}/${this.openRouterMaxRetries})`,
+        );
+        await this.sleep(retryDelay);
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('OpenRouter request failed');
+  }
+
+  private async requestOpenRouterOnce(
+    prompt: string,
+    apiKey: string,
+  ): Promise<string> {
     const response = await fetch(
       'https://openrouter.ai/api/v1/chat/completions',
       {
@@ -169,7 +214,10 @@ Tier rules (use evidence only -- never self-declaration):
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`OpenRouter API error ${response.status}: ${body}`);
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retryAfterMs = this.parseRetryAfterToMs(retryAfterHeader);
+
+      throw new OpenRouterRequestError(response.status, body, retryAfterMs);
     }
 
     const data = (await response.json()) as {
@@ -182,6 +230,57 @@ Tier rules (use evidence only -- never self-declaration):
     }
 
     return text;
+  }
+
+  private isRetryableOpenRouterError(error: unknown): boolean {
+    if (error instanceof OpenRouterRequestError) {
+      return [429, 500, 502, 503, 504].includes(error.statusCode);
+    }
+
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error);
+    return (
+      message.includes('network') ||
+      message.includes('fetch failed') ||
+      message.includes('timeout')
+    );
+  }
+
+  private computeRetryDelayMs(error: unknown, attempt: number): number {
+    if (
+      error instanceof OpenRouterRequestError &&
+      typeof error.retryAfterMs === 'number' &&
+      Number.isFinite(error.retryAfterMs)
+    ) {
+      return Math.max(this.openRouterBaseDelayMs, error.retryAfterMs);
+    }
+
+    const backoff = this.openRouterBaseDelayMs * 2 ** (attempt - 1);
+    const jitter = Math.floor(Math.random() * 250);
+    return backoff + jitter;
+  }
+
+  private parseRetryAfterToMs(value: string | null): number | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const asSeconds = Number(value);
+    if (Number.isFinite(asSeconds) && asSeconds > 0) {
+      return Math.round(asSeconds * 1000);
+    }
+
+    const asDateMs = Date.parse(value);
+    if (!Number.isNaN(asDateMs)) {
+      const delta = asDateMs - Date.now();
+      return delta > 0 ? delta : undefined;
+    }
+
+    return undefined;
+  }
+
+  private async sleep(delayMs: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   private parseGeminiJson(rawText: string): ScoringModel | null {
