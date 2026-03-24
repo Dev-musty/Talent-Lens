@@ -37,8 +37,7 @@ class OpenRouterRequestError extends Error {
 export class ScoringService {
   private readonly logger = new Logger(ScoringService.name);
   private readonly geminiModel = 'gemini-2.0-flash';
-  private readonly openRouterModel =
-    process.env.OPENROUTER_MODEL?.trim() || 'google/gemini-2.0-flash-001';
+  private readonly openRouterModel = process.env.OPENROUTER_MODEL?.trim();
   private readonly openRouterMaxRetries = 3;
   private readonly openRouterBaseDelayMs = 700;
 
