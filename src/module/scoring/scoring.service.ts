@@ -106,34 +106,30 @@ export class ScoringService {
     job: JobsModel,
     application: CreateApplicationDto,
   ): string {
-    return `You are an expert technical recruiter. Evaluate this freelancer for the role.
+    return `Evaluate candidate fit for this job and return ONLY strict JSON.
 
-JOB TITLE: ${job.title}
-JOB DESCRIPTION: ${job.description}
-BUDGET RANGE: $${job.budget_min} - $${job.budget_max}
+JOB
+title: ${job.title}
+description: ${job.description}
+budget: ${job.budget_min}-${job.budget_max}
 
-FREELANCER PROFILE:
-Name: ${application.freelancer_name}
-Skills: ${application.skills.join(', ')}
-Years of Experience: ${application.years_experience}
-Bio: ${application.bio ?? ''}
-Portfolio URLs: ${(application.portfolio_urls ?? []).join(', ')}
-Client Testimonies: ${application.testimonies ?? ''}
-Proposed Rate: $${application.proposed_rate}
+CANDIDATE
+name: ${application.freelancer_name}
+skills: ${application.skills.join(', ')}
+years_experience: ${application.years_experience}
+bio: ${application.bio ?? ''}
+portfolio_urls: ${(application.portfolio_urls ?? []).join(', ')}
+testimonies: ${application.testimonies ?? ''}
+proposed_rate: ${application.proposed_rate}
 
-Return ONLY a valid JSON object. No markdown. No preamble.
-{
-  "inferred_tier": "junior" | "mid" | "senior",
-  "fit_score": 0-100,
-  "testimony_score": 0-100,
-  "ai_reasoning": "2-3 sentence plain English explanation",
-  "tier_reasoning": "one sentence explaining tier assignment"
-}
+Output schema:
+{"inferred_tier":"junior|mid|senior","fit_score":0-100,"testimony_score":0-100,"ai_reasoning":"short reason","tier_reasoning":"tier reason"}
 
-Tier rules (use evidence only -- never self-declaration):
-- junior: 0-2 years, limited/generic portfolio, no specialisation
-- mid: 2-5 years, clear portfolio, some specialisation
-- senior: 5+ years, deep specialisation, leadership signals`;
+Tier rules:
+junior=0-2 years;
+mid=2-5 years;
+senior=5+ years.
+Use profile evidence only.`;
   }
 
   private async requestGemini(prompt: string, apiKey: string): Promise<string> {
