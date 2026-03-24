@@ -3,6 +3,26 @@ import { JobsModel } from '../jobs/model/jobs.model';
 import { CreateApplicationDto } from '../applications/dtos/create-application.dto';
 import { ScoringModel } from './model/scoring.model';
 
+type GeminiModelClient = {
+  generateContent: (
+    prompt: string,
+  ) => Promise<{ response: { text: () => string } }>;
+};
+
+type GeminiSdkClient = {
+  getGenerativeModel: (input: {
+    model: string;
+    generationConfig: {
+      temperature: number;
+      responseMimeType: string;
+    };
+  }) => GeminiModelClient;
+};
+
+type GeminiSdkModule = {
+  GoogleGenerativeAI: new (apiKey: string) => GeminiSdkClient;
+};
+
 @Injectable()
 export class ScoringService {
   private readonly logger = new Logger(ScoringService.name);
@@ -18,7 +38,7 @@ export class ScoringService {
         this.logger.error(
           'GEMINI_API_KEY is missing. Returning scoring fallback',
         );
-        return this.fallback(application);
+        return this.fallback(application, 'missing_api_key');
       }
 
       const prompt = this.buildPrompt(job, application);
@@ -27,13 +47,13 @@ export class ScoringService {
 
       if (!parsed) {
         this.logger.error('Gemini returned invalid JSON payload');
-        return this.fallback(application);
+        return this.fallback(application, 'invalid_model_output');
       }
 
       return parsed;
     } catch (error) {
       this.logger.error('Gemini scoring failed', error as Error);
-      return this.fallback(application);
+      return this.fallback(application, this.classifyGeminiError(error));
     }
   }
 
@@ -72,41 +92,21 @@ Tier rules (use evidence only -- never self-declaration):
   }
 
   private async requestGemini(prompt: string, apiKey: string): Promise<string> {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const sdk =
+      (await import('@google/generative-ai')) as unknown as GeminiSdkModule;
+    const client = new sdk.GoogleGenerativeAI(apiKey);
+    const model = client.getGenerativeModel({
+      model: this.model,
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
       },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-        },
-      }),
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Gemini API error ${response.status}: ${body}`);
-    }
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
-    const data = (await response.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{ text?: string }>;
-        };
-      }>;
-    };
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
+    if (!text?.trim()) {
       throw new Error('Gemini response did not include text content');
     }
 
@@ -199,7 +199,10 @@ Tier rules (use evidence only -- never self-declaration):
     return Math.max(0, Math.min(100, Math.round(numeric)));
   }
 
-  private fallback(application: CreateApplicationDto): ScoringModel {
+  private fallback(
+    application: CreateApplicationDto,
+    failureCode: string,
+  ): ScoringModel {
     const inferredTier = this.estimateTierFromExperience(
       application.years_experience,
     );
@@ -208,10 +211,37 @@ Tier rules (use evidence only -- never self-declaration):
       inferred_tier: inferredTier,
       fit_score: 0,
       testimony_score: 0,
-      ai_reasoning:
-        'AI scoring temporarily unavailable. Tier estimated from experience.',
+      ai_reasoning: `AI scoring temporarily unavailable (${failureCode}). Tier estimated from experience.`,
       tier_reasoning: `Estimated from ${application.years_experience} years of experience.`,
     };
+  }
+
+  private classifyGeminiError(error: unknown): string {
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error);
+
+    if (message.includes('api key') || message.includes('permission_denied')) {
+      return 'invalid_api_key';
+    }
+
+    if (
+      message.includes('quota') ||
+      message.includes('rate limit') ||
+      message.includes('resource_exhausted') ||
+      message.includes('429')
+    ) {
+      return 'quota_exceeded';
+    }
+
+    if (message.includes('model') && message.includes('not found')) {
+      return 'model_not_found';
+    }
+
+    if (message.includes('did not include text content')) {
+      return 'empty_model_response';
+    }
+
+    return 'gemini_request_failed';
   }
 
   private estimateTierFromExperience(
