@@ -1,9 +1,9 @@
 export const envs = () => ({
   port: Number(process.env.PORT ?? 3000),
   frontendUrl: process.env.FRONTEND_URL ?? '*',
-  gemini: {
-    apiKey: process.env.GEMINI_API_KEY,
-  },
+  //gemini: {
+  // apiKey: process.env.GEMINI_API_KEY,
+  //},
   openRouter: {
     apiKey: process.env.OPENROUTER_API_KEY,
     model: process.env.OPENROUTER_MODEL,

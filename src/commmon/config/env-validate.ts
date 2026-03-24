@@ -31,7 +31,7 @@ const parseNumber = (
 export type EnvVar = {
   PORT: number;
   FRONTEND_URL?: string;
-  GEMINI_API_KEY: string;
+  //GEMINI_API_KEY: string;
   OPENROUTER_API_KEY?: string;
   OPENROUTER_MODEL?: string;
   DATABASE_URL?: string;
@@ -47,7 +47,7 @@ export type EnvVar = {
 export const validate = (config: RawConfig): EnvVar => {
   const PORT = parseNumber(config, 'PORT', 3000);
   const FRONTEND_URL = asString(config.FRONTEND_URL).trim() || undefined;
-  const GEMINI_API_KEY = requireString(config, 'GEMINI_API_KEY');
+  //const GEMINI_API_KEY = requireString(config, 'GEMINI_API_KEY');
   const OPENROUTER_API_KEY =
     asString(config.OPENROUTER_API_KEY).trim() || undefined;
   const OPENROUTER_MODEL =
@@ -62,7 +62,7 @@ export const validate = (config: RawConfig): EnvVar => {
   const env: EnvVar = {
     PORT,
     FRONTEND_URL,
-    GEMINI_API_KEY,
+    //GEMINI_API_KEY,
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
     DATABASE_URL,
