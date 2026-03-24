@@ -86,9 +86,13 @@ cp .env.example .env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 GEMINI_API_KEY=your-gemini-api-key
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENROUTER_MODEL=google/gemini-2.0-flash-001
 FRONTEND_URL=https://your-frontend-domain.com
 PORT=3000
 ```
+
+OpenRouter is optional and is used as fallback when Gemini is rate-limited or unavailable.
 
 ### Run
 

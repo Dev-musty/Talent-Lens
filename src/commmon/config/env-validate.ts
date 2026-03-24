@@ -32,6 +32,8 @@ export type EnvVar = {
   PORT: number;
   FRONTEND_URL?: string;
   GEMINI_API_KEY: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
   DATABASE_URL?: string;
   DB_TYPE?: 'postgres';
   DB_HOST?: string;
@@ -46,6 +48,10 @@ export const validate = (config: RawConfig): EnvVar => {
   const PORT = parseNumber(config, 'PORT', 3000);
   const FRONTEND_URL = asString(config.FRONTEND_URL).trim() || undefined;
   const GEMINI_API_KEY = requireString(config, 'GEMINI_API_KEY');
+  const OPENROUTER_API_KEY =
+    asString(config.OPENROUTER_API_KEY).trim() || undefined;
+  const OPENROUTER_MODEL =
+    asString(config.OPENROUTER_MODEL).trim() || undefined;
   const DATABASE_URL = asString(config.DATABASE_URL).trim() || undefined;
   const DB_SSL_RAW = asString(config.DB_SSL).trim();
 
@@ -57,6 +63,8 @@ export const validate = (config: RawConfig): EnvVar => {
     PORT,
     FRONTEND_URL,
     GEMINI_API_KEY,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
     DATABASE_URL,
     DB_SSL: DB_SSL_RAW ? (DB_SSL_RAW as 'true' | 'false') : undefined,
   };

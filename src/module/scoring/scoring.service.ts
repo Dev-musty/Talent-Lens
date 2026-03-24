@@ -26,35 +26,69 @@ type GeminiSdkModule = {
 @Injectable()
 export class ScoringService {
   private readonly logger = new Logger(ScoringService.name);
-  private readonly model = 'gemini-2.0-flash';
+  private readonly geminiModel = 'gemini-2.0-flash';
+  private readonly openRouterModel =
+    process.env.OPENROUTER_MODEL?.trim() || 'google/gemini-2.0-flash-001';
 
   async scoreApplication(
     job: JobsModel,
     application: CreateApplicationDto,
   ): Promise<ScoringModel> {
-    try {
-      const apiKey = process.env.GEMINI_API_KEY?.trim();
-      if (!apiKey) {
-        this.logger.error(
-          'GEMINI_API_KEY is missing. Returning scoring fallback',
-        );
-        return this.fallback(application, 'missing_api_key');
+    const prompt = this.buildPrompt(job, application);
+
+    const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+    let geminiFailureCode = 'gemini_missing_api_key';
+
+    if (geminiApiKey) {
+      try {
+        const rawText = await this.requestGemini(prompt, geminiApiKey);
+        const parsed = this.parseGeminiJson(rawText);
+
+        if (parsed) {
+          return parsed;
+        }
+
+        geminiFailureCode = 'gemini_invalid_model_output';
+        this.logger.warn('Gemini returned invalid JSON payload');
+      } catch (error) {
+        geminiFailureCode = this.classifyGeminiError(error);
+        this.logger.warn(`Gemini scoring failed (${geminiFailureCode})`);
       }
-
-      const prompt = this.buildPrompt(job, application);
-      const rawText = await this.requestGemini(prompt, apiKey);
-      const parsed = this.parseGeminiJson(rawText);
-
-      if (!parsed) {
-        this.logger.error('Gemini returned invalid JSON payload');
-        return this.fallback(application, 'invalid_model_output');
-      }
-
-      return parsed;
-    } catch (error) {
-      this.logger.error('Gemini scoring failed', error as Error);
-      return this.fallback(application, this.classifyGeminiError(error));
     }
+
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
+    if (openRouterApiKey) {
+      try {
+        const rawText = await this.requestOpenRouter(prompt, openRouterApiKey);
+        const parsed = this.parseGeminiJson(rawText);
+
+        if (parsed) {
+          return parsed;
+        }
+
+        this.logger.warn('OpenRouter returned invalid JSON payload');
+        return this.fallback(application, 'openrouter_invalid_model_output');
+      } catch (error) {
+        const openRouterFailureCode = this.classifyOpenRouterError(error);
+        this.logger.error(
+          `OpenRouter scoring failed (${openRouterFailureCode})`,
+          error as Error,
+        );
+        return this.fallback(application, openRouterFailureCode);
+      }
+    }
+
+    if (!geminiApiKey) {
+      this.logger.error(
+        'GEMINI_API_KEY and OPENROUTER_API_KEY are missing. Returning scoring fallback',
+      );
+      return this.fallback(application, 'missing_ai_provider_keys');
+    }
+
+    this.logger.error(
+      `Gemini failed and OPENROUTER_API_KEY is missing (${geminiFailureCode}). Returning scoring fallback`,
+    );
+    return this.fallback(application, geminiFailureCode);
   }
 
   private buildPrompt(
@@ -96,7 +130,7 @@ Tier rules (use evidence only -- never self-declaration):
       (await import('@google/generative-ai')) as unknown as GeminiSdkModule;
     const client = new sdk.GoogleGenerativeAI(apiKey);
     const model = client.getGenerativeModel({
-      model: this.model,
+      model: this.geminiModel,
       generationConfig: {
         temperature: 0.1,
         responseMimeType: 'application/json',
@@ -108,6 +142,43 @@ Tier rules (use evidence only -- never self-declaration):
 
     if (!text?.trim()) {
       throw new Error('Gemini response did not include text content');
+    }
+
+    return text;
+  }
+
+  private async requestOpenRouter(
+    prompt: string,
+    apiKey: string,
+  ): Promise<string> {
+    const response = await fetch(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.openRouterModel,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`OpenRouter API error ${response.status}: ${body}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const text = data.choices?.[0]?.message?.content;
+    if (!text?.trim()) {
+      throw new Error('OpenRouter response did not include text content');
     }
 
     return text;
@@ -221,7 +292,7 @@ Tier rules (use evidence only -- never self-declaration):
       error instanceof Error ? error.message.toLowerCase() : String(error);
 
     if (message.includes('api key') || message.includes('permission_denied')) {
-      return 'invalid_api_key';
+      return 'gemini_invalid_api_key';
     }
 
     if (
@@ -230,18 +301,50 @@ Tier rules (use evidence only -- never self-declaration):
       message.includes('resource_exhausted') ||
       message.includes('429')
     ) {
-      return 'quota_exceeded';
+      return 'gemini_quota_exceeded';
     }
 
     if (message.includes('model') && message.includes('not found')) {
-      return 'model_not_found';
+      return 'gemini_model_not_found';
     }
 
     if (message.includes('did not include text content')) {
-      return 'empty_model_response';
+      return 'gemini_empty_model_response';
     }
 
     return 'gemini_request_failed';
+  }
+
+  private classifyOpenRouterError(error: unknown): string {
+    const message =
+      error instanceof Error ? error.message.toLowerCase() : String(error);
+
+    if (
+      message.includes('api error 401') ||
+      message.includes('unauthorized') ||
+      message.includes('invalid api key')
+    ) {
+      return 'openrouter_invalid_api_key';
+    }
+
+    if (
+      message.includes('api error 429') ||
+      message.includes('quota') ||
+      message.includes('rate limit') ||
+      message.includes('too many requests')
+    ) {
+      return 'openrouter_quota_exceeded';
+    }
+
+    if (message.includes('model') && message.includes('not found')) {
+      return 'openrouter_model_not_found';
+    }
+
+    if (message.includes('did not include text content')) {
+      return 'openrouter_empty_model_response';
+    }
+
+    return 'openrouter_request_failed';
   }
 
   private estimateTierFromExperience(

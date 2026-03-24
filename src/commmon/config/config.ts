@@ -4,6 +4,10 @@ export const envs = () => ({
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
   },
+  openRouter: {
+    apiKey: process.env.OPENROUTER_API_KEY,
+    model: process.env.OPENROUTER_MODEL,
+  },
   db: {
     type: process.env.DB_TYPE ?? 'postgres',
     url: process.env.DATABASE_URL,
